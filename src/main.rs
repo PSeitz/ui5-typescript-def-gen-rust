@@ -169,6 +169,11 @@ fn params_to_ts(params: &Option<Vec<Parameter>>) -> String {
     }).unwrap_or_else(|| "".to_string())
 }
 
+fn to_ts_function(visibility: &Visibility, method_name: &str, parameters: &Option<Vec<Parameter>>, return_value: Option<String>) -> String {
+    let params = params_to_ts(&parameters);
+    let return_value = return_value.as_ref().map(|el| ": ".to_string() + el).unwrap_or_else(||"".to_string());
+    format!("    {} {}({}){}", visibility.to_ts_visibility(), method_name, params, return_value)
+}
 fn extract_type_def(symbol: &Symbol) -> (FilePath, String) {
 
 
@@ -188,16 +193,14 @@ fn extract_type_def(symbol: &Symbol) -> (FilePath, String) {
             lines.push(format!("export = {};", symbol.basename));
             lines.push(format!("declare class {} {{", symbol.basename));
 
+            if let Some(constructor) = &symbol.constructor {
+                lines.push(to_ts_function(&constructor.visibility, "constructor", &constructor.parameters.as_ref().map(|el|el.to_vec()), None));
+            }
             if let Some(methods) = &symbol.methods {
                 lines.extend(methods.into_iter().map(|meth|{
-                    let name = meth.name.to_string();
-                    let return_val = return_val_to_ts(&meth.return_value);
-                    let params = params_to_ts(&meth.parameters);
-
-                    format!("    {}({}): {}", name, params, return_val)
+                    to_ts_function(&meth.visibility, &meth.name, &meth.parameters, Some(return_val_to_ts(&meth.return_value)))
                 }));
             }
-            
 
             lines.push("}".to_string());
         },
@@ -208,6 +211,32 @@ fn extract_type_def(symbol: &Symbol) -> (FilePath, String) {
     (file_path, lines.join("\n"))
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+enum Visibility {
+    #[serde(rename = "public")]
+    Public,
+    #[serde(rename = "private")]
+    Private,
+    #[serde(rename = "protected")]
+    Protected,
+    #[serde(rename = "hidden")]
+    Hidden,
+    #[serde(rename = "restricted")]
+    Restricted,
+}
+
+impl Visibility {
+    fn to_ts_visibility(&self) -> &str {
+        match self {
+            Visibility::Public => "public",
+            Visibility::Private => "private",
+            Visibility::Protected => "private",
+            Visibility::Hidden => "private",
+            Visibility::Restricted => "private",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Aggregations {
     name: String,
@@ -216,23 +245,33 @@ struct Aggregations {
     #[serde(rename = "type")]
     _type: String,
     cardinality: String,
-    visibility: String,
+    visibility: Visibility,
     // description: Option<String>,
     methods: Vec<String>,
     since: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
 enum MultiParam {
     Param(Parameter),
     Multi(Vec<Parameter>),
 }
 
+impl MultiParam {
+    fn to_vec(&self) -> Vec<Parameter> {
+        match self {
+            MultiParam::Param(param) => vec![param.clone()],
+            MultiParam::Multi(params) => params.clone(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Constructor {
-    visibility: String,
-    // parameters: MultiParam, //TODO can be both
-    // description: Option<String>,
+    visibility: Visibility,
+    parameters: Option<MultiParam>,
+    description: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -244,7 +283,7 @@ struct Deprecated {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Events {
     name: String,
-    visibility: String,
+    visibility: Visibility,
     // description: Option<String>,
     methods: Option<Vec<String>>,
     // parameters: Option<Vec<Parameter>>,
@@ -260,9 +299,9 @@ struct GetSource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Methods {
+struct Method {
     name: String,
-    visibility: String,
+    visibility: Visibility,
     #[serde(rename = "returnValue")]
     return_value: Option<ReturnValue>,
     parameters: Option<Vec<Parameter>>,
@@ -295,7 +334,7 @@ struct Parameter {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Properties {
     name: String,
-    visibility: String,
+    visibility: Visibility,
     #[serde(rename = "static")]
     _static: Option<bool>,
     #[serde(rename = "type")]
@@ -358,10 +397,10 @@ struct Symbol {
     export: Option<String>,
     #[serde(rename = "static")]
     _static: Option<bool>,
-    visibility: String,
+    visibility: Visibility,
     // description: Option<String>,
     properties: Option<Vec<Properties>>,
-    methods: Option<Vec<Methods>>,
+    methods: Option<Vec<Method>>,
     extends: Option<String>,
     #[serde(rename = "ui5-metamodel")]
     ui_5_metamodel: Option<bool>,
