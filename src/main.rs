@@ -91,14 +91,15 @@ fn convert(url:&str) -> Result<(), Box<std::error::Error>>{
         // println!("{:?}", symbol.module);
         // println!("");
 
-        // if serde_json::to_string_pretty(&symbol).unwrap().contains("JSONModel") {
+        // if symbol.basename.contains("ResourceBundle") || symbol.basename.contains("JSONModel") {
+        // // if serde_json::to_string_pretty(&symbol).unwrap().contains("ResourceBundle") {
         //     println!("{}", json_str);
-        //     let symbs = extract_type_defs(&[symbol.clone()]);
-        //     println!("{:?}", symbs[0]);
+        //     // let symbs = extract_type_defs(&[symbol.clone()]);
+        //     // println!("{:?}", symbs[0]);
 
-        //     fs::create_dir_all(&symbs[0].0.path)?;
-        //     let mut file = File::create(&symbs[0].0.full_path())?;
-        //     file.write_all(&symbs[0].1.as_bytes())?;
+        //     // fs::create_dir_all(&symbs[0].0.path)?;
+        //     // let mut file = File::create(&symbs[0].0.full_path())?;
+        //     // file.write_all(&symbs[0].1.as_bytes())?;
         // }
 
         symbols.push(symbol);
@@ -138,6 +139,9 @@ fn convert_ui5_type_to_ts_type(ui5_type: &str) -> &str {
     if ui5_type.trim().starts_with("sap"){
         return "any" // temp hack
     }
+    if ui5_type.trim().starts_with("module"){
+        return ui5_type.trim().split("/").last().unwrap();
+    }
 
     match ui5_type.trim() {
         "function" => "Function",
@@ -169,10 +173,11 @@ fn params_to_ts(params: &Option<Vec<Parameter>>) -> String {
     }).unwrap_or_else(|| "".to_string())
 }
 
-fn to_ts_function(visibility: &Visibility, method_name: &str, parameters: &Option<Vec<Parameter>>, return_value: Option<String>) -> String {
+fn to_ts_function(visibility: &Visibility, method_name: &str, parameters: &Option<Vec<Parameter>>, return_value: Option<String>, is_static: bool) -> String {
     let params = params_to_ts(&parameters);
     let return_value = return_value.as_ref().map(|el| ": ".to_string() + el).unwrap_or_else(||"".to_string());
-    format!("    {} {}({}){}", visibility.to_ts_visibility(), method_name, params, return_value)
+    let static_prop = if is_static {" static"}else {""};
+    format!("    {}{} {}({}){}", visibility.to_ts_visibility(), static_prop, method_name, params, return_value)
 }
 fn extract_type_def(symbol: &Symbol) -> (FilePath, String) {
 
@@ -190,15 +195,15 @@ fn extract_type_def(symbol: &Symbol) -> (FilePath, String) {
 
     match symbol.kind {
         Kinds::Class => {
-            lines.push(format!("export = {};", symbol.basename));
-            lines.push(format!("declare class {} {{", symbol.basename));
+            lines.push(format!("export default {};", symbol.get_name()));
+            lines.push(format!("declare class {} {{", symbol.get_name()));
 
             if let Some(constructor) = &symbol.constructor {
-                lines.push(to_ts_function(&constructor.visibility, "constructor", &constructor.parameters.as_ref().map(|el|el.to_vec()), None));
+                lines.push(to_ts_function(&constructor.visibility, "constructor", &constructor.parameters.as_ref().map(|el|el.to_vec()), None, false));
             }
             if let Some(methods) = &symbol.methods {
                 lines.extend(methods.into_iter().map(|meth|{
-                    to_ts_function(&meth.visibility, &meth.name, &meth.parameters, Some(return_val_to_ts(&meth.return_value)))
+                    to_ts_function(&meth.visibility, &meth.name, &meth.parameters, Some(return_val_to_ts(&meth.return_value)), meth._static.unwrap_or(false))
                 }));
             }
 
@@ -417,6 +422,12 @@ struct Symbol {
     references: Option<Vec<String>>,
     #[serde(rename = "final")]
     _final: Option<bool>,
+}
+
+impl Symbol {
+    fn get_name(&self) -> String {
+        self.basename.split("/").last().map(|el|el.to_string()).unwrap()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
