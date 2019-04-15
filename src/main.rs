@@ -91,16 +91,16 @@ fn convert(url:&str) -> Result<(), Box<std::error::Error>>{
         // println!("{:?}", symbol.module);
         // println!("");
 
-        // if symbol.basename.contains("ResourceBundle") || symbol.basename.contains("JSONModel") {
-        // // if serde_json::to_string_pretty(&symbol).unwrap().contains("ResourceBundle") {
-        //     println!("{}", json_str);
-        //     // let symbs = extract_type_defs(&[symbol.clone()]);
-        //     // println!("{:?}", symbs[0]);
+        if symbol.basename.contains("ResourceModel"){
+        // if serde_json::to_string_pretty(&symbol).unwrap().contains("ResourceBundle") {
+            println!("{}", json_str);
+            // let symbs = extract_type_defs(&[symbol.clone()]);
+            // println!("{:?}", symbs[0]);
 
-        //     // fs::create_dir_all(&symbs[0].0.path)?;
-        //     // let mut file = File::create(&symbs[0].0.full_path())?;
-        //     // file.write_all(&symbs[0].1.as_bytes())?;
-        // }
+            // fs::create_dir_all(&symbs[0].0.path)?;
+            // let mut file = File::create(&symbs[0].0.full_path())?;
+            // file.write_all(&symbs[0].1.as_bytes())?;
+        }
 
         symbols.push(symbol);
         
@@ -135,35 +135,70 @@ fn extract_type_defs(symbols: &[Symbol]) -> Vec<(FilePath, String)> {
         .collect()
 }
 
-fn convert_ui5_type_to_ts_type(ui5_type: &str) -> &str {
+fn convert_ui5_type_to_ts_type<'a>(ui5_type: &'a str, self_type: &str) -> String {
     if ui5_type.trim().starts_with("sap"){
-        return "any" // temp hack
+        if ui5_type.trim().split(".").last().unwrap() == self_type {
+            return self_type.to_string();
+        }
+        return "any".to_string() // temp hack
     }
-    if ui5_type.trim().starts_with("module"){
-        return ui5_type.trim().split("/").last().unwrap();
+
+    // e.g. Promise.<module:sap/base/i18n/ResourceBundle>
+    if ui5_type.trim().starts_with("Promise."){
+        println!("{}", ui5_type);
+
+        if let Some(start_pos) = ui5_type.find("<") {
+            if let Some(end_pos) = ui5_type.find(">") {
+                let promise_types = &ui5_type[start_pos .. end_pos];
+                return format!("Promise<{}>", convert_ui5_types_to_ts_types(promise_types, self_type));
+            }else {
+                //invalid documentation
+                return "Promise<any>".to_string();
+            }
+        }else {
+            //invalid documentation
+            return "Promise<any>".to_string();
+        }
     }
+
+    // module path like module:sap/base/i18n/ResourceBundle
+    let type_name = ui5_type.trim().split("/").last().unwrap();
+    if ui5_type.trim().contains("module") || ui5_type.trim().starts_with("jQ") {
+        if self_type == type_name {
+            return type_name.to_string();
+        }
+        return "any".to_string() // temp hack
+    }
+
+    // module path like jQuery.sap.util.ResourceBundle
+    if ui5_type.trim().contains(".") {
+        return "any".to_string() // temp hack
+    }
+
 
     match ui5_type.trim() {
         "function" => "Function",
+        "function()" => "Function",
         "Promise" => "Promise<any>",
         _=> ui5_type
-    }
-}
-fn convert_ui5_types_to_ts_types(ui5_types: &str) -> String {
-    ui5_types.split("|").map(|el|convert_ui5_type_to_ts_type(el)).collect::<Vec<&str>>().join("|")
+    }.to_string()
 }
 
-fn return_val_to_ts(return_value: &Option<ReturnValue>) -> String {
+fn convert_ui5_types_to_ts_types(ui5_types: &str, self_type: &str) -> String {
+    ui5_types.split("|").map(|el|convert_ui5_type_to_ts_type(el, self_type)).collect::<Vec<_>>().join("|")
+}
+
+fn return_val_to_ts(return_value: &Option<ReturnValue>, self_type: &str) -> String {
     return_value.as_ref().map(|val|{
         if let Some(_type) = &val._type {
-            convert_ui5_types_to_ts_types(_type)
+            convert_ui5_types_to_ts_types(_type, self_type)
         }else{
             "void".to_string()
         }
     }).unwrap_or_else(||"void".to_string())
 }
 fn param_to_ts(param: &Parameter) -> String {
-    format!("{}{}:{}", param.name, if param.optional {"?"}else{""}, convert_ui5_types_to_ts_types(&param._type))
+    format!("{}{}:{}", param.name, if param.optional {"?"}else{""}, convert_ui5_types_to_ts_types(&param._type, "DUMMY"))
 }
 fn params_to_ts(params: &Option<Vec<Parameter>>) -> String {
     params.as_ref().map(|params|{
@@ -203,7 +238,7 @@ fn extract_type_def(symbol: &Symbol) -> (FilePath, String) {
             }
             if let Some(methods) = &symbol.methods {
                 lines.extend(methods.into_iter().map(|meth|{
-                    to_ts_function(&meth.visibility, &meth.name, &meth.parameters, Some(return_val_to_ts(&meth.return_value)), meth._static.unwrap_or(false))
+                    to_ts_function(&meth.visibility, &meth.name, &meth.parameters, Some(return_val_to_ts(&meth.return_value, &symbol.get_name())), meth._static.unwrap_or(false), )
                 }));
             }
 
