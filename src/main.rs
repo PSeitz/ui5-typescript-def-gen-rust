@@ -91,9 +91,9 @@ fn convert(url:&str) -> Result<(), Box<std::error::Error>>{
         // println!("{:?}", symbol.module);
         // println!("");
 
-        if symbol.basename.contains("ResourceModel"){
+        if symbol.basename.contains("Device"){
         // if serde_json::to_string_pretty(&symbol).unwrap().contains("ResourceBundle") {
-            println!("{}", json_str);
+            // println!("{}", json_str);
             // let symbs = extract_type_defs(&[symbol.clone()]);
             // println!("{:?}", symbs[0]);
 
@@ -103,7 +103,7 @@ fn convert(url:&str) -> Result<(), Box<std::error::Error>>{
         }
 
         symbols.push(symbol);
-        
+
     }
 
     let classes = extract_type_defs(&symbols);
@@ -116,13 +116,6 @@ fn convert(url:&str) -> Result<(), Box<std::error::Error>>{
         let mut file = File::create(&el.0.full_path())?;
         file.write_all(&el.1.as_bytes())?;
     }
-    // let char_vec:Vec<Vec<char>> = resp.split("\n").map(|line| line.chars().collect()).collect();
-    // print!("{:?}", (&char_vec[0][5800 .. 5810 + 60]).iter().cloned().collect::<String>());
-
-    // println!("{}", serde_json::from_str::<RootInterface>(&resp).unwrap_err());
-
-    // let resp: RootInterface = serde_json::from_str(&resp)?;
-    // println!("{:?}", resp);
     Ok(())
 }
 
@@ -136,29 +129,31 @@ fn extract_type_defs(symbols: &[Symbol]) -> Vec<(FilePath, String)> {
 }
 
 fn convert_ui5_type_to_ts_type<'a>(ui5_type: &'a str, self_type: &str) -> String {
+    // e.g. Promise.<module:sap/base/i18n/ResourceBundle>
+    if ui5_type.trim().starts_with("Promise."){
+        if let Some(start_pos) = ui5_type.find("<") {
+
+            if !ui5_type.trim().ends_with(">") {
+                return "Promise<any>".to_string();
+            }
+
+            let promise_types = &ui5_type[start_pos + 1 .. ui5_type.len() - 1];
+            return format!("Promise<{}>", convert_ui5_type_to_ts_type(promise_types, self_type));
+        }else {
+            //invalid documentation
+            return "Promise<any>".to_string();
+        }
+    }
+
+    if ui5_type.contains("|"){
+        return ui5_type.split("|").map(|el|convert_ui5_type_to_ts_type(el, self_type)).collect::<Vec<_>>().join("|");
+    }
+
     if ui5_type.trim().starts_with("sap"){
         if ui5_type.trim().split(".").last().unwrap() == self_type {
             return self_type.to_string();
         }
         return "any".to_string() // temp hack
-    }
-
-    // e.g. Promise.<module:sap/base/i18n/ResourceBundle>
-    if ui5_type.trim().starts_with("Promise."){
-        println!("{}", ui5_type);
-
-        if let Some(start_pos) = ui5_type.find("<") {
-            if let Some(end_pos) = ui5_type.find(">") {
-                let promise_types = &ui5_type[start_pos .. end_pos];
-                return format!("Promise<{}>", convert_ui5_types_to_ts_types(promise_types, self_type));
-            }else {
-                //invalid documentation
-                return "Promise<any>".to_string();
-            }
-        }else {
-            //invalid documentation
-            return "Promise<any>".to_string();
-        }
     }
 
     // module path like module:sap/base/i18n/ResourceBundle
@@ -175,30 +170,35 @@ fn convert_ui5_type_to_ts_type<'a>(ui5_type: &'a str, self_type: &str) -> String
         return "any".to_string() // temp hack
     }
 
+    if ui5_type == self_type {
+        return self_type.to_string();
+    }
 
     match ui5_type.trim() {
+        "int" => "number",
+        "Error" => "Error",
         "function" => "Function",
         "function()" => "Function",
         "Promise" => "Promise<any>",
-        _=> ui5_type
+        _=> "any"
     }.to_string()
 }
 
-fn convert_ui5_types_to_ts_types(ui5_types: &str, self_type: &str) -> String {
-    ui5_types.split("|").map(|el|convert_ui5_type_to_ts_type(el, self_type)).collect::<Vec<_>>().join("|")
-}
+// fn convert_ui5_types_to_ts_types(ui5_types: &str, self_type: &str) -> String {
+//     ui5_types.split("|").map(|el|convert_ui5_type_to_ts_type(el, self_type)).collect::<Vec<_>>().join("|")
+// }
 
 fn return_val_to_ts(return_value: &Option<ReturnValue>, self_type: &str) -> String {
     return_value.as_ref().map(|val|{
         if let Some(_type) = &val._type {
-            convert_ui5_types_to_ts_types(_type, self_type)
+            convert_ui5_type_to_ts_type(_type, self_type)
         }else{
             "void".to_string()
         }
     }).unwrap_or_else(||"void".to_string())
 }
 fn param_to_ts(param: &Parameter) -> String {
-    format!("{}{}:{}", param.name, if param.optional {"?"}else{""}, convert_ui5_types_to_ts_types(&param._type, "DUMMY"))
+    format!("{}{}:{}", param.name, if param.optional {"?"}else{""}, convert_ui5_type_to_ts_type(&param._type, "DUMMY"))
 }
 fn params_to_ts(params: &Option<Vec<Parameter>>) -> String {
     params.as_ref().map(|params|{
